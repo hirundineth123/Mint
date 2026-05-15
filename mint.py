@@ -61,8 +61,16 @@ CREATE TABLE IF NOT EXISTS uids (
 )
 """)
 
+# settings db for automod
 conn.commit()
 
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS settings (
+    guild_id TEXT PRIMARY KEY,
+    log_channel_id TEXT
+)
+""")
+conn.commit()
 
 # memory system
 memory = {}
@@ -244,6 +252,14 @@ async def mint_help(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed)
 
+# set log channel
+@bot.tree.command(name="set_logs", description="Set the channel for ghost-mod logs")
+@app_commands.checks.has_permissions(administrator=True)
+async def set_logs(interaction: discord.Interaction, channel: discord.TextChannel):
+    cursor.execute("INSERT OR REPLACE INTO settings (guild_id, log_channel_id) VALUES (?, ?)", 
+                   (str(interaction.guild.id), str(channel.id)))
+    conn.commit()
+    await interaction.response.send_message(f"✅ Log channel set to {channel.mention}", ephemeral=True)
 
 # save uid
 @bot.tree.command(
@@ -276,32 +292,32 @@ async def setuid(interaction: discord.Interaction, uid: str):
 
 
 # see your own uid
-@bot.tree.command(
-    name="myuid",
-    description="view your uid"
-)
-async def myuid(interaction: discord.Interaction):
+@bot.tree.command(name="myuid", description="view your uid")
 
+async def myuid(interaction: discord.Interaction):
     cursor.execute(
-        "SELECT uid FROM uids WHERE user_id=?",
+        "SELECT uid, public FROM uids WHERE user_id=?",
         (str(interaction.user.id),)
     )
-
     result = cursor.fetchone()
 
     if result:
-
-        await interaction.response.send_message(
-            f"📌 your uid: `{result[0]}`",
-            ephemeral=True
+        uid_val, is_public = result
+        status_text = "🔓 Public" if is_public == 1 else "🔒 Private"
+        
+        embed = discord.Embed(
+            title="📟 Your Personal Citizen ID",
+            description="This information is only visible to you.",
+            color=0x00ff88 # Neon Green
         )
-
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.add_field(name="Saved UID", value=f"`{uid_val}`", inline=True)
+        embed.add_field(name="Visibility", value=status_text, inline=True)
+        embed.set_footer(text="Use /setpublic to change visibility")
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
-
-        await interaction.response.send_message(
-            "❌ no uid saved",
-            ephemeral=True
-        )
+        await interaction.response.send_message("❌ No UID saved. Use `/setuid` first!", ephemeral=True)
 
 
 # public/private uid
@@ -329,41 +345,33 @@ async def setpublic(interaction: discord.Interaction, status: bool):
 
 
 # view other peoples uid
-@bot.tree.command(
-    name="uid",
-    description="view someone's uid"
-)
+@bot.tree.command(name="uid", description="view someone's uid")
 async def uid(interaction: discord.Interaction, user: discord.User):
-
-    cursor.execute("""
-    SELECT uid, public
-    FROM uids
-    WHERE user_id=?
-    """, (str(user.id),))
-
+    cursor.execute(
+        "SELECT uid, public FROM uids WHERE user_id=?",
+        (str(user.id),)
+    )
     result = cursor.fetchone()
 
     if not result:
-
-        return await interaction.response.send_message(
-            "❌ no uid found",
-            ephemeral=True
-        )
+        return await interaction.response.send_message("❌ This user hasn't registered their ID yet.", ephemeral=True)
 
     uid_value, public = result
 
     if public == 1:
-
-        await interaction.response.send_message(
-            f"📌 {user.name}'s uid: `{uid_value}`"
+        embed = discord.Embed(
+            title="🔍 Hesperia Database: Search Result",
+            description=f"Public record found for {user.mention}.",
+            color=0x00ccff # Cyan/Blue
         )
-
+        embed.set_author(name=user.name, icon_url=user.display_avatar.url)
+        embed.add_field(name="Citizen UID", value=f"**{uid_value}**", inline=False)
+        embed.set_footer(text="NTE // SEA Community Intelligence")
+        
+        # Sending this publicly so the person who asked can share it
+        await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
-
-        await interaction.response.send_message(
-            "🔒 uid is private",
-            ephemeral=True
-        )
+        await interaction.response.send_message("🔒 This citizen has set their record to **Private**.", ephemeral=True)
 
 
 # remove uid
@@ -394,6 +402,30 @@ async def on_message(message):
 
     if message.author.bot:
         return
+
+    # --- START OF AUTO-MOD BLOCK ---
+    illegal_content = ["scam", "discord.gg/", "http://", "https://", "hack", "nude", "free nitro"] 
+    
+    if any(word in message.content.lower() for word in illegal_content):
+        content_snapshot = message.content
+        try:
+            await message.delete()
+        except:
+            pass
+
+        cursor.execute("SELECT log_channel_id FROM settings WHERE guild_id=?", (str(message.guild.id),))
+        result = cursor.fetchone()
+        
+        if result:
+            log_channel = bot.get_channel(int(result[0]))
+            if log_channel:
+                log_embed = discord.Embed(title="👻 Ghost Deletion", color=0x2b2d31, timestamp=message.created_at)
+                log_embed.add_field(name="User", value=f"{message.author} ({message.author.id})", inline=True)
+                log_embed.add_field(name="Channel", value=message.channel.mention, inline=True)
+                log_embed.add_field(name="Content", value=f"```{content_snapshot}```", inline=False)
+                await log_channel.send(embed=log_embed)
+        return # STOP here so the bot doesn't try to chat or set reminders
+    # --- END OF AUTO-MOD BLOCK ---
 
     # only reply if tagged
     if bot.user not in message.mentions:
