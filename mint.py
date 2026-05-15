@@ -10,6 +10,7 @@ import asyncio
 import random
 import time
 import re
+import requests
 
 # ai and search part
 from duckduckgo_search import DDGS
@@ -24,6 +25,7 @@ with open("config.json", "r") as f:
 TOKEN = config["token"]
 OPENROUTER_KEY = config["openrouter_key"]
 GROQ_KEY = config["groq_key"]
+GIPHY_KEY = config["giphy_key"]
 
 
 # smart ai (openrouter)
@@ -61,16 +63,15 @@ CREATE TABLE IF NOT EXISTS uids (
 )
 """)
 
-# settings db for automod
-conn.commit()
-
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS settings (
     guild_id TEXT PRIMARY KEY,
     log_channel_id TEXT
 )
 """)
+
 conn.commit()
+
 
 # memory system
 memory = {}
@@ -79,34 +80,54 @@ memory = {}
 cooldowns = {}
 
 
-# random gifs mint can use
+# random gifs mint can use (fallback system)
 emotion_gifs = {
-
-    "happy": [
-        "https://media.tenor.com/Wz5lbhWkO4AAAAAM/anime-happy.gif"
-    ],
-
-    "laugh": [
-        "https://media.tenor.com/0AVbKGY_MxMAAAAM/anime-laugh.gif"
-    ],
-
-    "sad": [
-        "https://media.tenor.com/jD4-9W7SOyQAAAAM/anime-sad.gif"
-    ],
-
-    "angry": [
-        "https://media.tenor.com/NV0kGJ0dKtAAAAAM/anime-angry.gif"
-    ],
-
-    "cute": [
-        "https://media.tenor.com/jhJ7bEjJm7AAAAAM/anime-smile.gif"
-    ]
+    "happy": ["https://media.tenor.com/Wz5lbhWkO4AAAAAM/anime-happy.gif"],
+    "laugh": ["https://media.tenor.com/0AVbKGY_MxMAAAAM/anime-laugh.gif"],
+    "sad": ["https://media.tenor.com/jD4-9W7SOyQAAAAM/anime-sad.gif"],
+    "angry": ["https://media.tenor.com/NV0kGJ0dKtAAAAAM/anime-angry.gif"],
+    "cute": ["https://media.tenor.com/jhJ7bEjJm7AAAAAM/anime-smile.gif"]
 }
 
 
-# choose a gif based on the vibe
-def choose_gif(text):
+# =========================
+# 🎞 GIPHY SYSTEM (NEW)
+# =========================
+def get_giphy_gif(query):
+    try:
+        url = "https://api.giphy.com/v1/gifs/search"
 
+        params = {
+            "api_key": GIPHY_KEY,
+            "q": query,
+            "limit": 10
+        }
+
+        res = requests.get(url, params=params, timeout=5)
+        data = res.json()
+
+        if "data" not in data or not data["data"]:
+            return None
+
+        gif = random.choice(data["data"])
+        return gif["images"]["original"]["url"]
+
+    except:
+        return None
+
+
+mood_queries = {
+    "happy": "anime happy cute",
+    "laugh": "anime laugh funny",
+    "sad": "anime sad crying",
+    "angry": "anime angry",
+    "cute": "anime blushing cute",
+    "excited": "anime excited sparkle"
+}
+
+
+# choose fallback gif
+def choose_gif(text):
     t = text.lower()
 
     if any(w in t for w in ["lol", "haha", "funny"]):
@@ -127,16 +148,11 @@ def choose_gif(text):
     return None
 
 
-# web search so mint isnt outdated
+# web search
 def search_web(query):
-
     try:
-
         with DDGS() as ddgs:
-
-            results = list(
-                ddgs.text(query, max_results=3)
-            )
+            results = list(ddgs.text(query, max_results=3))
 
             if not results:
                 return ""
@@ -152,401 +168,31 @@ def search_web(query):
 
 # reminder task
 async def reminder_task(channel, user, seconds, text):
-
     await asyncio.sleep(seconds)
-
-    await channel.send(
-        f"⏰ {user.mention} reminder: {text}"
-    )
+    await channel.send(f"⏰ {user.mention} reminder: {text}")
 
 
-# mint slash commands
-mint = app_commands.Group(
-    name="mint",
-    description="Mint commands"
-)
-
+# slash commands group
+mint = app_commands.Group(name="mint", description="Mint commands")
 bot.tree.add_command(mint)
 
 
-# when bot starts
 @bot.event
 async def on_ready():
-
-    try:
-
-        synced = await bot.tree.sync()
-        print(f"synced {len(synced)} commands")
-
-    except Exception as e:
-        print(e)
-
-    # rich presence
+    await bot.tree.sync()
     await bot.change_presence(
-
         status=discord.Status.online,
-
         activity=discord.Activity(
             type=discord.ActivityType.playing,
             name="NTE"
         )
     )
-
     print(f"logged in as {bot.user}")
 
 
-# mint help command
-@mint.command(
-    name="help",
-    description="shows mint commands"
-)
-async def mint_help(interaction: discord.Interaction):
-
-    embed = discord.Embed(
-        title="✨ Mint AI System",
-        description="cute little ai companion for your server",
-        color=0x00ff88
-    )
-
-    embed.add_field(
-        name="💬 ai chat",
-        value=(
-            "```"
-            "@Mint hello\n"
-            "@Mint current us president\n"
-            "@Mint explain black holes\n"
-            "@Mint best genshin team"
-            "```"
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="⏰ reminders",
-        value=(
-            "```"
-            "@Mint ping @user in 5 minutes\n"
-            "@Mint ping @user in 2 hours"
-            "```"
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="🆔 uid stuff",
-        value=(
-            "```"
-            "/setuid\n"
-            "/myuid\n"
-            "/uid\n"
-            "/setpublic\n"
-            "/removeuid"
-            "```"
-        ),
-        inline=False
-    )
-
-    embed.set_footer(
-        text="Mint • NTE Companion"
-    )
-
-    await interaction.response.send_message(embed=embed)
-
-# set log channel
-@bot.tree.command(name="set_logs", description="Set the channel for ghost-mod logs")
-@app_commands.checks.has_permissions(administrator=True)
-async def set_logs(interaction: discord.Interaction, channel: discord.TextChannel):
-    cursor.execute("INSERT OR REPLACE INTO settings (guild_id, log_channel_id) VALUES (?, ?)", 
-                   (str(interaction.guild.id), str(channel.id)))
-    conn.commit()
-    await interaction.response.send_message(f"✅ Log channel set to {channel.mention}", ephemeral=True)
-
-# save uid
-@bot.tree.command(
-    name="setuid",
-    description="save your uid"
-)
-async def setuid(interaction: discord.Interaction, uid: str):
-
-    cursor.execute("""
-    INSERT OR REPLACE INTO uids
-    VALUES (
-        ?, ?,
-        COALESCE(
-            (SELECT public FROM uids WHERE user_id=?),
-            0
-        )
-    )
-    """, (
-        str(interaction.user.id),
-        uid,
-        str(interaction.user.id)
-    ))
-
-    conn.commit()
-
-    await interaction.response.send_message(
-        f"✅ saved uid: `{uid}`",
-        ephemeral=True
-    )
-
-
-# see your own uid
-@bot.tree.command(name="myuid", description="view your uid")
-
-async def myuid(interaction: discord.Interaction):
-    cursor.execute(
-        "SELECT uid, public FROM uids WHERE user_id=?",
-        (str(interaction.user.id),)
-    )
-    result = cursor.fetchone()
-
-    if result:
-        uid_val, is_public = result
-        status_text = "🔓 Public" if is_public == 1 else "🔒 Private"
-        
-        embed = discord.Embed(
-            title="📟 Your Personal Citizen ID",
-            description="This information is only visible to you.",
-            color=0x00ff88 # Neon Green
-        )
-        embed.set_thumbnail(url=interaction.user.display_avatar.url)
-        embed.add_field(name="Saved UID", value=f"`{uid_val}`", inline=True)
-        embed.add_field(name="Visibility", value=status_text, inline=True)
-        embed.set_footer(text="Use /setpublic to change visibility")
-        
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-    else:
-        await interaction.response.send_message("❌ No UID saved. Use `/setuid` first!", ephemeral=True)
-
-
-# public/private uid
-@bot.tree.command(
-    name="setpublic",
-    description="change uid privacy"
-)
-async def setpublic(interaction: discord.Interaction, status: bool):
-
-    cursor.execute("""
-    UPDATE uids
-    SET public=?
-    WHERE user_id=?
-    """, (
-        1 if status else 0,
-        str(interaction.user.id)
-    ))
-
-    conn.commit()
-
-    await interaction.response.send_message(
-        "✅ updated privacy",
-        ephemeral=True
-    )
-
-
-# view other peoples uid
-@bot.tree.command(name="uid", description="view someone's uid")
-async def uid(interaction: discord.Interaction, user: discord.User):
-    cursor.execute(
-        "SELECT uid, public FROM uids WHERE user_id=?",
-        (str(user.id),)
-    )
-    result = cursor.fetchone()
-
-    if not result:
-        return await interaction.response.send_message("❌ This user hasn't registered their ID yet.", ephemeral=True)
-
-    uid_value, public = result
-
-    if public == 1:
-        embed = discord.Embed(
-            title="🔍 Hesperia Database: Search Result",
-            description=f"Public record found for {user.mention}.",
-            color=0x00ccff # Cyan/Blue
-        )
-        embed.set_author(name=user.name, icon_url=user.display_avatar.url)
-        embed.add_field(name="Citizen UID", value=f"**{uid_value}**", inline=False)
-        embed.set_footer(text="NTE // SEA Community Intelligence")
-        
-        # Sending this publicly so the person who asked can share it
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-    else:
-        await interaction.response.send_message("🔒 This citizen has set their record to **Private**.", ephemeral=True)
-
-
-# remove uid
-@bot.tree.command(
-    name="removeuid",
-    description="delete your uid"
-)
-async def removeuid(interaction: discord.Interaction):
-
-    cursor.execute("""
-    DELETE FROM uids
-    WHERE user_id=?
-    """, (
-        str(interaction.user.id),
-    ))
-
-    conn.commit()
-
-    await interaction.response.send_message(
-        "🗑️ uid removed",
-        ephemeral=True
-    )
-
-
-# main ai system
-@bot.event
-async def on_message(message):
-
-    if message.author.bot:
-        return
-
-    # --- START OF AUTO-MOD BLOCK ---
-    illegal_content = ["scam", "discord.gg/", "http://", "https://", "hack", "nude", "free nitro"] 
-    
-    if any(word in message.content.lower() for word in illegal_content):
-        content_snapshot = message.content
-        try:
-            await message.delete()
-        except:
-            pass
-
-        cursor.execute("SELECT log_channel_id FROM settings WHERE guild_id=?", (str(message.guild.id),))
-        result = cursor.fetchone()
-        
-        if result:
-            log_channel = bot.get_channel(int(result[0]))
-            if log_channel:
-                log_embed = discord.Embed(title="👻 Ghost Deletion", color=0x2b2d31, timestamp=message.created_at)
-                log_embed.add_field(name="User", value=f"{message.author} ({message.author.id})", inline=True)
-                log_embed.add_field(name="Channel", value=message.channel.mention, inline=True)
-                log_embed.add_field(name="Content", value=f"```{content_snapshot}```", inline=False)
-                await log_channel.send(embed=log_embed)
-        return # STOP here so the bot doesn't try to chat or set reminders
-    # --- END OF AUTO-MOD BLOCK ---
-
-    # only reply if tagged
-    if bot.user not in message.mentions:
-        return
-
-    user_id = str(message.author.id)
-
-    # tiny anti spam cooldown
-    now = time.time()
-
-    if user_id in cooldowns:
-
-        if now - cooldowns[user_id] < 3:
-            return
-
-    cooldowns[user_id] = now
-
-    async with message.channel.typing():
-
-        text = message.content.replace(
-            f"<@{bot.user.id}>",
-            ""
-        ).replace(
-            f"<@!{bot.user.id}>",
-            ""
-        ).strip()
-
-        if not text:
-
-            return await message.reply(
-                "hmm? you called me? ✨",
-                mention_author=False
-            )
-
-        # reminder detector
-        reminder_match = re.search(
-            r"ping\s+<@!?(\d+)>\s+in\s+(\d+)\s*(second|seconds|minute|minutes|hour|hours)",
-            text.lower()
-        )
-
-        if reminder_match:
-
-            target_id = int(reminder_match.group(1))
-            amount = int(reminder_match.group(2))
-            unit = reminder_match.group(3)
-
-            target = message.guild.get_member(target_id)
-
-            seconds = amount
-
-            if "minute" in unit:
-                seconds *= 60
-
-            elif "hour" in unit:
-                seconds *= 3600
-
-            asyncio.create_task(
-                reminder_task(
-                    message.channel,
-                    target,
-                    seconds,
-                    f"requested by {message.author.name}"
-                )
-            )
-
-            return await message.reply(
-                f"⏰ okay! i'll ping {target.mention} in {amount} {unit}",
-                mention_author=False
-            )
-
-        # search web for recent stuff
-        needs_web = any(
-            word in text.lower()
-            for word in [
-                "latest",
-                "current",
-                "today",
-                "news",
-                "who is",
-                "president",
-                "now"
-            ]
-        )
-
-        web_info = search_web(text) if needs_web else ""
-
-        # memory
-        channel_id = str(message.channel.id)
-
-        if channel_id not in memory:
-            memory[channel_id] = []
-
-        memory[channel_id].append(
-            f"{message.author.name}: {text}"
-        )
-
-        memory[channel_id] = memory[channel_id][-10:]
-
-        convo = "\n".join(memory[channel_id])
-
-        # harder questions use smarter ai
-        smart_keywords = [
-            "explain",
-            "why",
-            "how",
-            "code",
-            "compare",
-            "current",
-            "latest",
-            "who is",
-            "help",
-            "tutorial"
-        ]
-
-        use_smart_ai = any(
-            k in text.lower()
-            for k in smart_keywords
-        )
-
-        # mint personality
-        system_prompt = f"""
+# system prompt
+def build_prompt(web_info, convo):
+    return f"""
 You are Mint.
 
 PERSONALITY:
@@ -563,6 +209,7 @@ RULES:
 - be useful
 - use web info if available
 - never say you're an ai
+- you may add mood tags like <<mood:happy>>, <<mood:sad>>, <<mood:laugh>>, <<mood:angry>>, <<mood:cute>>
 
 WEB INFO:
 {web_info}
@@ -571,74 +218,143 @@ CHAT:
 {convo}
 """
 
+
+# =========================
+# MAIN AI + MOD SYSTEM
+# =========================
+@bot.event
+async def on_message(message):
+
+    if message.author.bot:
+        return
+
+    # =========================
+    # 🚨 AUTO-MOD (UPDATED)
+    # =========================
+    illegal_content = ["scam", "discord.gg/", "hack", "nude", "free nitro"]
+
+    if any(word in message.content.lower() for word in illegal_content):
+
+        content_snapshot = message.content
+
+        try:
+            await message.delete()
+        except:
+            pass
+
+        # find moderation-logs channel
+        log_channel = discord.utils.get(message.guild.text_channels, name="moderation-logs")
+
+        if log_channel:
+            embed = discord.Embed(
+                title="🚨 AutoMod Action",
+                color=0xff0000,
+                timestamp=message.created_at
+            )
+            embed.add_field(name="User", value=f"{message.author} ({message.author.id})", inline=False)
+            embed.add_field(name="Channel", value=message.channel.mention, inline=False)
+            embed.add_field(name="Content", value=f"```{content_snapshot}```", inline=False)
+
+            await log_channel.send(embed=embed)
+
+        return
+
+    # only reply if tagged
+    if bot.user not in message.mentions:
+        return
+
+    user_id = str(message.author.id)
+
+    now = time.time()
+
+    if user_id in cooldowns:
+        if now - cooldowns[user_id] < 3:
+            return
+
+    cooldowns[user_id] = now
+
+    async with message.channel.typing():
+
+        text = message.content.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
+
+        if not text:
+            return await message.reply("hmm? you called me? ✨", mention_author=False)
+
+        # web search
+        needs_web = any(x in text.lower() for x in ["latest", "current", "today", "news", "who is", "now"])
+        web_info = search_web(text) if needs_web else ""
+
+        # memory
+        channel_id = str(message.channel.id)
+
+        if channel_id not in memory:
+            memory[channel_id] = []
+
+        memory[channel_id].append(f"{message.author.name}: {text}")
+        memory[channel_id] = memory[channel_id][-10:]
+
+        convo = "\n".join(memory[channel_id])
+
+        smart_keywords = ["explain", "why", "how", "code", "compare", "latest", "who is", "help"]
+        use_smart_ai = any(k in text.lower() for k in smart_keywords)
+
+        system_prompt = build_prompt(web_info, convo)
+
         try:
 
-            # smarter ai
             if use_smart_ai:
-
                 response = smart_ai.chat.completions.create(
-
                     model="openai/gpt-oss-20b:free",
-
                     messages=[
-                        {
-                            "role": "system",
-                            "content": system_prompt
-                        },
-                        {
-                            "role": "user",
-                            "content": text
-                        }
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": text}
                     ]
                 )
-
-                reply = response.choices[0].message.content
-
-            # faster ai
             else:
-
                 response = fast_ai.chat.completions.create(
-
                     model="llama-3.1-8b-instant",
-
                     messages=[
-                        {
-                            "role": "system",
-                            "content": system_prompt
-                        },
-                        {
-                            "role": "user",
-                            "content": text
-                        }
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": text}
                     ]
                 )
 
-                reply = response.choices[0].message.content
+            reply = response.choices[0].message.content
 
-            # save ai reply into memory
-            memory[channel_id].append(
-                f"Mint: {reply}"
-            )
+            # mood detection
+            mood = None
+            match = re.search(r"<<mood:(.*?)>>", reply)
 
-            # send reply
-            await message.reply(
-                reply[:2000],
-                mention_author=False
-            )
+            if match:
+                mood = match.group(1)
+                reply = re.sub(r"<<mood:.*?>>", "", reply).strip()
 
-            # sometimes send gif too
-            gif = choose_gif(reply)
+            memory[channel_id].append(f"Mint: {reply}")
+
+            await message.reply(reply[:2000], mention_author=False)
+
+            # =========================
+            # 🎞 GIF SYSTEM (NEW FINAL)
+            # =========================
+            gif = None
+
+            # try AI mood first
+            if mood:
+                gif = get_giphy_gif(mood_queries.get(mood, mood))
+
+            # fallback random mood
+            if not gif:
+                gif = get_giphy_gif(random.choice(list(mood_queries.values())))
+
+            # fallback local gifs if GIPHY fails
+            if not gif:
+                gif = choose_gif(reply)
 
             if gif and random.randint(1, 3) == 1:
-
                 await message.channel.send(gif)
 
         except Exception as e:
-
-            await message.reply(
-                f"❌ ai error:\n```{e}```",
-                mention_author=False
-            )
+            await message.reply(f"❌ ai error:\n```{e}```", mention_author=False)
 
     await bot.process_commands(message)
 
