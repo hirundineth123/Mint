@@ -1,1 +1,4 @@
 discord.py
+openai
+groq
+duckduckgo-search
