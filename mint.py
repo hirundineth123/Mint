@@ -216,7 +216,7 @@ async def mint_help(interaction: discord.Interaction):
         description="cute little ai companion for your server",
         color=0x00ff88
     )
-    # Fixed the broken strings from your screenshot here:
+
     embed.add_field(
         name="💬 ai chat",
         value="```\n@Mint hello\n@Mint current us president\n@Mint explain black holes\n@Mint best genshin team\n```",
@@ -540,23 +540,45 @@ async def on_message(message):
             text.lower()
         )
 
+        # reminder detector
+        reminder_match = re.search(
+            r"ping\s+<@!?(\d+)>\s+in\s+(\d+)\s*(second|seconds|minute|minutes|hour|hours)",
+            text.lower()
+        )
+
         if reminder_match:
             target_id = int(reminder_match.group(1))
             amount = int(reminder_match.group(2))
             unit = reminder_match.group(3)
+
             target = message.guild.get_member(target_id)
-            
-        if not target:
-            return await message.reply("that user isn't here anymore 😭", mention_author=False)
+
+            if not target:
+                return await message.reply(
+                    "i cant find that user 😭",
+                    mention_author=False
+                )
 
             seconds = amount
+
             if "minute" in unit:
                 seconds *= 60
             elif "hour" in unit:
                 seconds *= 3600
 
-            asyncio.create_task(reminder_task(message.channel, target, seconds, f"requested by {message.author.name}"))
-            return await message.reply(f"⏰ okay! i'll ping {target.mention} in {amount} {unit}", mention_author=False)
+            asyncio.create_task(
+                reminder_task(
+                    message.channel,
+                    target,
+                    seconds,
+                    f"requested by {message.author.name}"
+                )
+            )
+
+            return await message.reply(
+                f"⏰ okay! i'll ping {target.mention} in {amount} {unit}",
+                mention_author=False
+            )
 
         # web search
         needs_web = any(word in text.lower() for word in ["latest", "current", "today", "news", "who is", "president", "now", "what is"])
